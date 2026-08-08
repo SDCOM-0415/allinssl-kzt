@@ -31,8 +31,8 @@ func applyAction(params map[string]any) (Response, error) {
 		return Response{}, fmt.Errorf("密码: %w", err)
 	}
 
-	// 读取 action 参数。
-	domainID, err := requireString(params, "domain_id")
+	// 读取 action 参数，兼容 domain_id 和 domainId。
+	domainID, err := requireStringAny(params, []string{"domain_id", "domainId"})
 	if err != nil {
 		return Response{}, err
 	}
@@ -76,11 +76,18 @@ func applyAction(params map[string]any) (Response, error) {
 
 // requireString 从 params 中提取非空字符串。
 func requireString(params map[string]any, key string) (string, error) {
-	value, ok := params[key].(string)
-	if !ok || value == "" {
-		return "", fmt.Errorf("%s 必填且必须为非空字符串", key)
+	return requireStringAny(params, []string{key})
+}
+
+// requireStringAny 从 params 中按候选键顺序提取第一个非空字符串。
+func requireStringAny(params map[string]any, keys []string) (string, error) {
+	for _, key := range keys {
+		value, ok := params[key].(string)
+		if ok && value != "" {
+			return value, nil
+		}
 	}
-	return value, nil
+	return "", fmt.Errorf("%s 必填且必须为非空字符串", keys[0])
 }
 
 // hydunClient 封装 Hydun CDN API 调用。
@@ -134,11 +141,11 @@ func (c *hydunClient) login(ctx context.Context, username, password string) (str
 		return "", parseAPIError("登录失败", resp.StatusCode, respBody)
 	}
 
-	// Hydun CDN 统一响应格式: { code, message, data }，登录成功时 data 应为 token 字符串。
+	// Hydun CDN 统一响应格式: { code, message, data }，登录成功时 data 可能为对象或字符串。
 	var loginResp struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
-		Data    string `json:"data"`
+		Code    int            `json:"code"`
+		Message string         `json:"message"`
+		Data    map[string]any `json:"data"`
 	}
 	if err := json.Unmarshal(respBody, &loginResp); err != nil {
 		return "", fmt.Errorf("解析登录响应: %w", err)
@@ -146,10 +153,27 @@ func (c *hydunClient) login(ctx context.Context, username, password string) (str
 	if loginResp.Code != 0 {
 		return "", fmt.Errorf("登录失败: %s", loginResp.Message)
 	}
-	if loginResp.Data == "" {
-		return "", fmt.Errorf("登录响应中未包含 token")
+
+	// 尝试从 data 对象中提取常见 token 字段。
+	possibleKeys := []string{"token", "access_token", "jwt", "data"}
+	for _, key := range possibleKeys {
+		if v, ok := loginResp.Data[key].(string); ok && v != "" {
+			debugf("从 data.%s 获取到 token", key)
+			return v, nil
+		}
 	}
-	return loginResp.Data, nil
+	debugf("登录响应 data 对象=%v", loginResp.Data)
+
+	// data 可能是字符串类型 token 的直接包装。
+	var rawData struct {
+		Data string `json:"data"`
+	}
+	if err := json.Unmarshal(respBody, &rawData); err == nil && rawData.Data != "" {
+		debugf("从字符串 data 获取到 token")
+		return rawData.Data, nil
+	}
+
+	return "", fmt.Errorf("登录响应中未包含 token")
 }
 
 // updateDomainCertificate 调用 Hydun API 更新指定域名的 HTTPS 证书。
