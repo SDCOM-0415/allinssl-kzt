@@ -6,9 +6,6 @@ import (
 	"time"
 )
 
-// tls 被 action.go 引用，为避免在不同文件重复定义，统一在此导出一次。
-// newHydunClient 在 action.go 中定义并使用本包的 tls.Config。
-
 // defaultHTTPTimeout 是默认远端 API 超时。
 const defaultHTTPTimeout = 15 * time.Second
 

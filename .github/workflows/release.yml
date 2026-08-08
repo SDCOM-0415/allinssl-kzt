@@ -95,7 +95,7 @@ jobs:
           echo "=== debug metadata test ==="
           printf '%s' '{"action":"get_metadata"}' | "$OUTPUT" || true
           echo "=== debug apply error test ==="
-          printf '%s' '{"action":"apply","params":{"endpoint":"https://kzt.hydun.com","credential":"fake","domain_id":"uuid","cert":"PEM","key":"PEM"}}' | "$OUTPUT" || true
+          printf '%s' '{"action":"apply","params":{"username":"test","password":"test","domain_id":"uuid","cert":"PEM","key":"PEM"}}' | "$OUTPUT" || true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

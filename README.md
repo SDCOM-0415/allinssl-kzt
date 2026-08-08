@@ -4,10 +4,14 @@ AllinSSL 1.1.3 可执行插件，用于将 SSL/TLS 证书自动部署到 [Hydun 
 
 ## 工作原理
 
-插件通过 AllinSSL 的 stdin/stdout JSON 协议接收证书部署请求，调用 Hydun CDN API `PUT /api/v1/domains/:id/certificate` 将证书和私钥更新到指定域名。
+插件通过 AllinSSL 的 stdin/stdout JSON 协议接收证书部署请求，调用 Hydun CDN API 完成登录和证书更新。
 
 ```
-AllinSSL → stdin (JSON) → 插件进程 → HTTP PUT → Hydun CDN API
+AllinSSL → stdin (JSON) → 插件进程
+                                ↓
+              POST /api/v1/auth/login → JWT token
+                                ↓
+          PUT /api/v1/domains/:id/certificate → Hydun CDN API
                                 ↓
                     stdout (JSON) → AllinSSL
 ```
@@ -24,8 +28,8 @@ AllinSSL → stdin (JSON) → 插件进程 → HTTP PUT → Hydun CDN API
 
 | 字段         | 类型    | 必填 | 说明                                              |
 | ------------ | ------- | ---- | ------------------------------------------------- |
-| `endpoint`   | string  | 是   | Hydun API 地址，如 `https://kzt.hydun.com`       |
-| `credential` | string  | 是   | JWT Token，用于 `Authorization: Bearer <token>`   |
+| `username`   | string  | 是   | Hydun CDN 用户名                                  |
+| `password`   | string  | 是   | Hydun CDN 密码                                    |
 | `verify_tls` | boolean | 否   | 是否校验远端 TLS 证书，默认 `true`                |
 
 ### Action 参数 (params)
@@ -44,7 +48,7 @@ AllinSSL → stdin (JSON) → 插件进程 → HTTP PUT → Hydun CDN API
 .
 ├── main.go              # 入口：stdin 读取、action 分发、stdout 响应
 ├── protocol.go          # Request/Response/Metadata 类型定义与 JSON 辅助
-├── action.go            # apply action 参数校验与 Hydun API 调用逻辑
+├── action.go            # apply action 参数校验、登录、Hydun API 调用逻辑
 ├── client.go            # HTTP 传输层与 TLS 配置
 ├── logger.go            # debugf 日志辅助函数
 ├── debug.go             # debug 构建标签 (Debug = true)
@@ -67,16 +71,19 @@ AllinSSL → stdin (JSON) → 插件进程 → HTTP PUT → Hydun CDN API
 debug 版本的日志示例：
 
 ```
-[debug] plugin started, version=1.0.0-debug
-[debug] received action=apply
-[debug] applyAction invoked with 5 params
-[debug] target endpoint=https://kzt.hydun.com domain_id=uuid
-[debug] received cert length=3568 key length=1678
+[debug] 插件启动，版本=1.0.0-debug
+[debug] 收到 action=apply
+[debug] applyAction 被调用，共 5 个参数
+[debug] 目标 domain_id=uuid
+[debug] 收到证书长度=3568 私钥长度=1678
 [debug] verify_tls=true http_timeout=15s
-[debug] building PUT /api/v1/domains/uuid/certificate request
-[debug] Hydun API responded status=200 OK
-[debug] apply succeeded: status=success message=certificate deployed
-[debug] plugin exiting
+[debug] 正在登录 Hydun CDN 获取 token
+[debug] 登录接口返回状态=200 OK
+[debug] 登录成功
+[debug] 构造 PUT /api/v1/domains/uuid/certificate 请求
+[debug] 证书接口返回状态=200 OK
+[debug] 部署成功: status=success message=证书已部署到 Hydun CDN 域名
+[debug] 插件退出
 ```
 
 > debug 日志只输出到 stderr，不会污染 AllinSSL 的 stdout 协议通道。但 AllinSSL 1.1.3 在 action 调用时会丢弃 stderr，因此 debug 版本主要用于本地直接运行或 CI 日志排查。
@@ -122,10 +129,10 @@ CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="-s -w -X mai
 # 校验 metadata
 python scripts/validate_plugin.py ./dist/hydun-cdn
 
-# 校验 apply action（期望失败，因为 credential 无效）
+# 校验 apply action（期望失败，因为凭据无效）
 python scripts/validate_plugin.py ./dist/hydun-cdn \
   --action apply \
-  --params '{"endpoint":"https://kzt.hydun.com","credential":"fake","domain_id":"uuid","cert":"PEM","key":"PEM"}' \
+  --params '{"username":"test","password":"test","domain_id":"uuid","cert":"PEM","key":"PEM"}' \
   --expect-error
 ```
 
@@ -136,7 +143,7 @@ python scripts/validate_plugin.py ./dist/hydun-cdn \
 echo '{"action":"get_metadata"}' | ./dist/hydun-cdn
 
 # 测试 apply（debug 版本可看到完整日志）
-echo '{"action":"apply","params":{"endpoint":"https://kzt.hydun.com","credential":"YOUR_TOKEN","domain_id":"DOMAIN_UUID","cert":"CERT_PEM","key":"KEY_PEM"}}' | ./dist/hydun-cdn-debug
+echo '{"action":"apply","params":{"username":"YOUR_USERNAME","password":"YOUR_PASSWORD","domain_id":"DOMAIN_UUID","cert":"CERT_PEM","key":"KEY_PEM"}}' | ./dist/hydun-cdn-debug
 ```
 
 ## GitHub Actions 发布
@@ -179,15 +186,15 @@ echo '{"action":"apply","params":{"endpoint":"https://kzt.hydun.com","credential
    ```
 4. 在 AllinSSL 管理界面触发插件扫描，确认 `hydun-cdn` 出现在插件列表
 5. 新建 `plugin` 类型的主机授权，选择 `hydun-cdn`，填写：
-   - `endpoint`：Hydun API 地址
-   - `credential`：JWT Token
+   - `username`：Hydun CDN 用户名
+   - `password`：Hydun CDN 密码
 6. 在证书部署工作流中选择该授权和 `apply` action，填写 `domain_id`
 
 ## 安全说明
 
 - 默认校验远端 TLS 证书，仅在授权配置中显式关闭 `verify_tls` 时才跳过
 - 所有 HTTP 请求设置 15 秒超时
-- 不会在响应中回显证书、私钥、Token 等敏感信息
+- 不会在响应中回显证书、私钥、用户名、密码等敏感信息
 - stdout 只输出最终 JSON 响应，不混入日志
 - 不执行外部 shell 命令，不依赖工作目录
 

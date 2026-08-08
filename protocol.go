@@ -51,14 +51,14 @@ type Response struct {
 func readRequest() (*Request, error) {
 	data, err := io.ReadAll(os.Stdin)
 	if err != nil {
-		return nil, fmt.Errorf("read stdin: %w", err)
+		return nil, fmt.Errorf("读取标准输入失败: %w", err)
 	}
 	var req Request
 	if err := json.Unmarshal(data, &req); err != nil {
-		return nil, fmt.Errorf("decode request: %w", err)
+		return nil, fmt.Errorf("解析请求失败: %w", err)
 	}
 	if req.Action == "" {
-		return nil, fmt.Errorf("action is required")
+		return nil, fmt.Errorf("缺少 action 字段")
 	}
 	return &req, nil
 }
