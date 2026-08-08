@@ -30,20 +30,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # goos 和 variant 作为顶层维度，交叉展开为 3×2=6 个任务。
+        # include 只负责为每个 goos 补充 runner/goarch/ext 属性。
+        goos: [windows, linux, darwin]
+        variant: [release, debug]
         include:
-          - runner: windows-latest
-            goos: windows
+          - goos: windows
+            runner: windows-latest
             goarch: amd64
             ext: .exe
-          - runner: ubuntu-latest
-            goos: linux
+          - goos: linux
+            runner: ubuntu-latest
             goarch: amd64
             ext: ''
-          - runner: macos-latest
-            goos: darwin
+          - goos: darwin
+            runner: macos-latest
             goarch: arm64
             ext: ''
-        variant: [release, debug]
 
     steps:
       - name: Checkout
