@@ -1,0 +1,147 @@
+name: Release Hydun CDN Plugin
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v1.0.0)'
+        required: true
+        type: string
+      version:
+        description: 'Plugin version shown in metadata (e.g. 1.0.0)'
+        required: true
+        type: string
+      release_status:
+        description: 'Release status'
+        required: true
+        type: choice
+        options:
+          - latest
+          - pre-release
+        default: 'latest'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.goos }}-${{ matrix.goarch }}-${{ matrix.variant }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            goos: windows
+            goarch: amd64
+            ext: .exe
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            ext: ''
+          - runner: macos-latest
+            goos: darwin
+            goarch: arm64
+            ext: ''
+        variant: [release, debug]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Build binary
+        shell: bash
+        run: |
+          mkdir -p dist
+          VERSION="${{ github.event.inputs.version }}"
+          BASE_NAME="hydun-cdn-${{ matrix.goos }}-${{ matrix.goarch }}"
+
+          if [ "${{ matrix.variant }}" = "debug" ]; then
+            OUTPUT="dist/${BASE_NAME}-debug${{ matrix.ext }}"
+            echo "Building DEBUG binary: $OUTPUT"
+            CGO_ENABLED=0 GOOS="${{ matrix.goos }}" GOARCH="${{ matrix.goarch }}" \
+              go build -trimpath -tags debug \
+              -ldflags="-X main.Version=${VERSION}-debug" \
+              -o "$OUTPUT" .
+          else
+            OUTPUT="dist/${BASE_NAME}${{ matrix.ext }}"
+            echo "Building RELEASE binary: $OUTPUT"
+            CGO_ENABLED=0 GOOS="${{ matrix.goos }}" GOARCH="${{ matrix.goarch }}" \
+              go build -trimpath \
+              -ldflags="-s -w -X main.Version=${VERSION}" \
+              -o "$OUTPUT" .
+          fi
+
+      - name: Run protocol validation (release only)
+        if: matrix.variant == 'release'
+        shell: bash
+        run: |
+          pip install --quiet -U pip || true
+          python scripts/validate_plugin.py "dist/hydun-cdn-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}"
+
+      - name: Run protocol validation with debug logs (debug only)
+        if: matrix.variant == 'debug'
+        shell: bash
+        run: |
+          OUTPUT="dist/hydun-cdn-${{ matrix.goos }}-${{ matrix.goarch }}-debug${{ matrix.ext }}"
+          echo "=== debug metadata test ==="
+          printf '%s' '{"action":"get_metadata"}' | "$OUTPUT" || true
+          echo "=== debug apply error test ==="
+          printf '%s' '{"action":"apply","params":{"endpoint":"https://kzt.hydun.com","credential":"fake","domain_id":"uuid","cert":"PEM","key":"PEM"}}' | "$OUTPUT" || true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hydun-cdn-${{ matrix.goos }}-${{ matrix.goarch }}-${{ matrix.variant }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: hydun-cdn-*-*-*
+
+      - name: Flatten artifacts
+        shell: bash
+        run: |
+          mkdir -p release
+          find dist -type f -exec cp {} release/ \;
+          ls -la release/
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          cd release
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag }}
+          name: Hydun CDN Plugin ${{ github.event.inputs.tag }}
+          body: |
+            Release version: `${{ github.event.inputs.version }}`
+            Status: `${{ github.event.inputs.release_status }}`
+
+            Binaries:
+            - `hydun-cdn-windows-amd64.exe` / `hydun-cdn-windows-amd64-debug.exe`
+            - `hydun-cdn-linux-amd64` / `hydun-cdn-linux-amd64-debug`
+            - `hydun-cdn-darwin-arm64` / `hydun-cdn-darwin-arm64-debug`
+
+            Debug builds output verbose logs to stderr and are useful for CI/troubleshooting.
+            Release builds are stripped (`-s -w`) and recommended for production use with AllinSSL.
+          files: release/*
+          prerelease: ${{ github.event.inputs.release_status == 'pre-release' }}
+          make_latest: ${{ github.event.inputs.release_status == 'latest' }}

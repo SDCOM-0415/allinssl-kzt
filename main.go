@@ -1,11 +1,14 @@
 package main
 
+// Version 由构建时 -ldflags "-X main.Version=..." 注入，release.yml 会根据用户输入填充。
+var Version = "dev"
+
 // metadata 是插件元数据定义。
 // 注意：保留字段 key/cert 由 AllinSSL 在执行 apply 时注入，不会出现在 config 或 action params 中。
 var metadata = PluginMetadata{
 	Name:        "hydun-cdn",
 	Description: "Deploy certificates to Hydun CDN domain HTTPS configuration",
-	Version:     "1.0.0",
+	Version:     Version,
 	Author:      "allinssl",
 	Config: []ConfigParam{
 		{
@@ -44,11 +47,15 @@ var metadata = PluginMetadata{
 }
 
 func main() {
+	debugf("plugin started, version=%s", Version)
+
 	req, err := readRequest()
 	if err != nil {
+		debugf("failed to read request: %v", err)
 		writeResponse(failure(err.Error()))
 		return
 	}
+	debugf("received action=%s", req.Action)
 
 	switch req.Action {
 	case "get_metadata":
@@ -57,13 +64,17 @@ func main() {
 	case "apply":
 		resp, err := applyAction(req.Params)
 		if err != nil {
+			debugf("apply failed: %v", err)
 			writeResponse(failure(err.Error()))
 			return
 		}
+		debugf("apply succeeded: status=%s message=%s", resp.Status, resp.Message)
 		writeResponse(resp)
 	default:
+		debugf("unknown action: %s", req.Action)
 		writeResponse(failure("unknown action: " + req.Action))
 	}
+	debugf("plugin exiting")
 }
 
 // metadataResult 把强类型元数据转换为 map 以返回 AllinSSL。

@@ -17,6 +17,7 @@ func applyAction(params map[string]any) (Response, error) {
 	if params == nil {
 		return Response{}, fmt.Errorf("params are required")
 	}
+	debugf("applyAction invoked with %d params", len(params))
 
 	// 读取授权配置（允许被 action params 覆盖）。
 	endpoint, err := requireString(params, "endpoint")
@@ -35,6 +36,7 @@ func applyAction(params map[string]any) (Response, error) {
 	if err != nil {
 		return Response{}, err
 	}
+	debugf("target endpoint=%s domain_id=%s", endpoint, domainID)
 
 	// 读取 AllinSSL 注入的证书和私钥。
 	certPEM, err := requireString(params, "cert")
@@ -45,11 +47,13 @@ func applyAction(params map[string]any) (Response, error) {
 	if err != nil {
 		return Response{}, err
 	}
+	debugf("received cert length=%d key length=%d", len(certPEM), len(keyPEM))
 
 	verifyTLS := true
 	if v, ok := params["verify_tls"].(bool); ok {
 		verifyTLS = v
 	}
+	debugf("verify_tls=%v http_timeout=15s", verifyTLS)
 
 	client := newHydunClient(endpoint, token, verifyTLS, 15*time.Second)
 
@@ -90,6 +94,7 @@ func newHydunClient(baseURL, token string, verifyTLS bool, timeout time.Duration
 // updateDomainCertificate 调用 Hydun API 更新指定域名的 HTTPS 证书。
 // 对应接口：PUT /api/v1/domains/:id/certificate，body 使用 cert_pem + key_pem。
 func (c *hydunClient) updateDomainCertificate(ctx context.Context, domainID, certPEM, keyPEM string) error {
+	debugf("building PUT /api/v1/domains/%s/certificate request", domainID)
 	payload := map[string]string{
 		"cert_pem": certPEM,
 		"key_pem":  keyPEM,
@@ -113,6 +118,7 @@ func (c *hydunClient) updateDomainCertificate(ctx context.Context, domainID, cer
 		return fmt.Errorf("call Hydun API: %w", err)
 	}
 	defer resp.Body.Close()
+	debugf("Hydun API responded status=%s", resp.Status)
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
