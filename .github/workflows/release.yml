@@ -133,7 +133,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag }}
-          name: Hydun CDN Plugin ${{ github.event.inputs.tag }}
+          name: ${{ github.event.inputs.tag }}
           body: |
             Release version: `${{ github.event.inputs.version }}`
             Status: `${{ github.event.inputs.release_status }}`
